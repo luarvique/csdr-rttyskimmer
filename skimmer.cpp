@@ -15,15 +15,13 @@
 
 #define BAUD_RATE    (45.45)
 #define BANDWIDTH    (170)
-
-#define MAX_SCALES   (8)
+#define MAX_SCALES   (16)
 #define MAX_INPUT    (sampleRate/(BANDWIDTH/2))
 #define MAX_CHANNELS (MAX_INPUT/2)
-#define INPUT_STEP   (MAX_INPUT)
 #define AVG_SECONDS  (3)
 #define NEIGH_WEIGHT (0.5)
-#define THRES_WEIGHT (8.0)
-#define RTTY_WEIGHT  (4.0)
+#define THRES_WEIGHT (6.0)
+#define RTTY_WEIGHT  (8.0)
 
 unsigned int sampleRate = 48000; // Input audio sampling rate
 unsigned int printChars = 8;     // Number of characters to print at once
@@ -65,7 +63,7 @@ int main(int argc, char *argv[])
   FILE *inFile, *outFile;
   const char *inName, *outName;
   float accPower, avgPower, maxPower, prevPower;
-  int j, n, remains, x;
+  int j, i, k, n, x;
 
   struct
   {
@@ -157,7 +155,6 @@ int main(int argc, char *argv[])
 
   // This is our baud rate in samples
   unsigned int baudStep = floor(sampleRate / BAUD_RATE);
-  float thrWeight = THRES_WEIGHT;
 
   // RTTY bits are collected here
   int inLevel[MAX_CHANNELS] = {0};
@@ -178,28 +175,31 @@ int main(int argc, char *argv[])
   }
 
   // Read and decode input
-  for(remains=0, avgPower=4.0, x=0 ; ; )
+  for(avgPower=4.0, x=0 ; ; )
   {
     if(!use16bit)
     {
-      n = fread(fftIn+remains, sizeof(float), MAX_INPUT-remains, inFile);
-      if(n!=MAX_INPUT-remains) break;
+      // Read input data
+      if(fread(fftIn, sizeof(float), MAX_INPUT, inFile) != MAX_INPUT)
+        break;
     }
     else
     {
-      n = fread(dataIn+remains, sizeof(short), MAX_INPUT-remains, inFile);
-      if(n!=MAX_INPUT-remains) break;
+      // Read input data
+      if(fread(dataIn, sizeof(short), MAX_INPUT, inFile) != MAX_INPUT)
+        break;
       // Expand shorts to floats, normalizing them to [-1;1) range
-      for(j=remains ; j<MAX_INPUT ; ++j)
+      for(j=0 ; j<MAX_INPUT ; ++j)
         fftIn[j] = (float)dataIn[j] / 32768.0;
     }
 
+    // Apply Hamming window
+    double hk = 2.0 * M_PI / (MAX_INPUT-1);
+    for(j=0 ; j<MAX_INPUT ; ++j)
+      fftIn[j] = fftIn[j] * (0.54 - 0.46 * cos(j * hk));
+
     // Compute FFT
     fftwf_execute(fft);
-
-    // Shift input data
-    remains = MAX_INPUT-INPUT_STEP;
-    memcpy(fftIn, fftIn+INPUT_STEP, remains*sizeof(float));
 
     // Go to magnitudes
     for(j=0 ; j<MAX_CHANNELS ; ++j)
@@ -218,38 +218,40 @@ int main(int argc, char *argv[])
     for(j=0, maxPower=0.0 ; j<MAX_CHANNELS ; ++j)
     {
       float v = fftOut[j][0];
-      int scale = floor(log10(v));
+      int scale = floor(log(v));
       scale = scale<0? 0 : scale+1>=MAX_SCALES? MAX_SCALES-1 : scale+1;
       maxPower = fmax(maxPower, v);
       scales[scale].power += v;
       scales[scale].count++;
     }
 
-    // Find two most populated scales
-    int maxj0 = scales[0].count>scales[1].count? 0:1;
-    int maxj1 = scales[0].count>scales[1].count? 1:0;
-    for(j=2 ; j<MAX_SCALES ; ++j)
+    // Find most populated scales and use them for ground power
+    for(i=0, n=0, accPower=0.0 ; i<MAX_SCALES-1 ; ++i)
     {
-      if(scales[j].count>scales[maxj1].count)
+      // Look for the next most populated scale
+      for(k=i, j=i+1 ; j<MAX_SCALES ; ++j)
+        if(scales[j].count>scales[k].count) k = j;
+      // If found, swap with current one
+      if(k!=i)
       {
-        maxj1 = j;
-        if(scales[j].count>scales[maxj0].count)
-        {
-          maxj1 = maxj0;
-          maxj0 = j;
-        }
+        float v = scales[k].power;
+        j = scales[k].count;
+        scales[k] = scales[i];
+        scales[i].power = v;
+        scales[i].count = j;
       }
+      // Keep track of the total number of buckets
+      accPower += scales[i].power;
+      n += scales[i].count;
+      // Stop when we collect 1/2 of all buckets
+      if(n>=MAX_CHANNELS/2) break;
     }
 
-    // Use two most populated scales to obtain ground power
-//    accPower = (scales[maxj0].power + scales[maxj1].power) /
-//               (scales[maxj0].count + scales[maxj1].count);
-
-    // Use most populated scale to obtain ground power
-    accPower = scales[maxj0].power / scales[maxj0].count;
+//fprintf(stderr, "accPower = %f (%d buckets, %d%%)\n", accPower/n, i+1, 100*n*2/MAX_INPUT);
 
     // Maintain rolling average over AVG_SECONDS
-    avgPower += (accPower - avgPower) * INPUT_STEP / sampleRate / AVG_SECONDS;
+    accPower /= n;
+    avgPower += (accPower - avgPower) * MAX_INPUT / sampleRate / AVG_SECONDS;
 
     // Decode by channel
     for(j=0 ; j<MAX_CHANNELS ; ++j)
@@ -264,9 +266,7 @@ int main(int argc, char *argv[])
       accPower = fmax(0.0, power - avgPower);
 #elif USE_THRESHOLD
       // Convert channel signal to 1/0 values based on threshold
-      accPower = power >= avgPower*thrWeight/*THRES_WEIGHT*/? 1.0 : 0.0;
-      if(j && (accPower>0.0) && (prevPower>0.0)) thrWeight = fmax(2.0, thrWeight * 1.1);
-      if(j && (accPower==0.0) && (prevPower==0.0)) thrWeight = fmax(2.0, thrWeight * 0.999);
+      accPower = power >= avgPower*THRES_WEIGHT? 1.0 : 0.0;
 #else
       // Use power as-is
       accPower = power;
@@ -284,17 +284,18 @@ int main(int argc, char *argv[])
 //      if(!j) state = testRtty[x]=='1'? 1:-1;
 
       // Show data by channel, for debugging purposes
-      dbgOut[j] = state > 0? '>' : state < 0? '<' : power > avgPower? '=' : '.';
+      dbgOut[j] = state > 0? '>' : state < 0? '<' : power >= avgPower*THRES_WEIGHT? '=' : '.';
 
       // Accumulate state data
-      inCount[j] += INPUT_STEP;
-      inLevel[j] += state * INPUT_STEP;
+      n = inCount[j]+MAX_INPUT>baudStep? baudStep-inCount[j] : MAX_INPUT;
+      inCount[j] += MAX_INPUT;
+      inLevel[j] += state * n;
 
       // Resync if cannot determine the signal level
-      if(abs(inLevel[j]) < INPUT_STEP)
+      if(abs(inLevel[j]) < MAX_INPUT)
       {
-        inCount[j] = INPUT_STEP;
-        inLevel[j] = state * INPUT_STEP;
+        inCount[j] = MAX_INPUT;
+        inLevel[j] = state * MAX_INPUT;
       }
 
       // Once enough data accumulated...
