@@ -180,14 +180,12 @@ int main(int argc, char *argv[])
     if(!use16bit)
     {
       // Read input data
-      if(fread(fftIn, sizeof(float), MAX_INPUT, inFile) != MAX_INPUT)
-        break;
+      if(fread(fftIn, sizeof(float), MAX_INPUT, inFile) != MAX_INPUT) break;
     }
     else
     {
       // Read input data
-      if(fread(dataIn, sizeof(short), MAX_INPUT, inFile) != MAX_INPUT)
-        break;
+      if(fread(dataIn, sizeof(short), MAX_INPUT, inFile) != MAX_INPUT) break;
       // Expand shorts to floats, normalizing them to [-1;1) range
       for(j=0 ; j<MAX_INPUT ; ++j)
         fftIn[j] = (float)dataIn[j] / 32768.0;

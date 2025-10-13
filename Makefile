@@ -2,7 +2,7 @@ CC	:= g++
 INCDIRS	:=
 LIBDIRS	:=
 LIBS	:= -lcsdr++ -lfftw3f
-CFLAGS	:= -O1 $(INCDIRS)
+CFLAGS	:= -O3 $(INCDIRS)
 OBJECTS	:= skimmer.o bufmodule.o
 
 all: csdr-rttyskimmer
