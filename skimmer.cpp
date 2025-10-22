@@ -11,10 +11,12 @@
 #define USE_NEIGHBORS  0 // 1: Subtract neighbors from each FFT bucket
 #define USE_AVG_BOTTOM 0 // 1: Subtract average value from each bucket
 #define USE_AVG_RATIO  0 // 1: Divide each bucket by average value
-#define USE_THRESHOLD  1 // 1: Convert each bucket to 0.0/1.0 values
+#define USE_THRESHOLD  0 // 1: Convert each bucket to 0.0/1.0 values
 
 #define BAUD_RATE    (45.45)
 #define BANDWIDTH    (170)
+//#define BAUD_RATE    (50.0)
+//#define BANDWIDTH    (450)
 #define MAX_SCALES   (16)
 #define MAX_INPUT    (sampleRate/(BANDWIDTH/2))
 #define MAX_CHANNELS (MAX_INPUT/2)
@@ -27,6 +29,7 @@ unsigned int sampleRate = 48000; // Input audio sampling rate
 unsigned int printChars = 8;     // Number of characters to print at once
 bool use16bit = false;           // TRUE: Use S16 input values (else F32)
 bool showDbg  = false;           // TRUE: Print debug data to stderr
+bool invert   = false;//true;           // TRUE: Invert RTTY levels
 
 Csdr::Ringbuffer<unsigned char> **out;
 Csdr::RingbufferReader<unsigned char> **outReader;
@@ -62,8 +65,8 @@ int main(int argc, char *argv[])
 {
   FILE *inFile, *outFile;
   const char *inName, *outName;
-  float accPower, avgPower, maxPower, prevPower;
-  int j, i, k, n, x;
+  float accPower, avgPower, maxPower;
+  int j, i, k, n, x, y;
 
   struct
   {
@@ -107,6 +110,9 @@ int main(int argc, char *argv[])
       case 'f':
         use16bit = false;
         break;
+      case 'o':
+        invert = true;
+        break;
       case 'd':
         showDbg = true;
         break;
@@ -117,6 +123,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "  -n <chars> -- Number of characters to print.\n");
         fprintf(stderr, "  -i         -- Use 16bit signed integer input.\n");
         fprintf(stderr, "  -f         -- Use 32bit floating point input.\n");
+        fprintf(stderr, "  -o         -- Invert RTTY levels.\n");
         fprintf(stderr, "  -d         -- Print debug information to STDERR.\n");
         fprintf(stderr, "  -h         -- Print this help message.\n");
         return(0);
@@ -168,14 +175,14 @@ int main(int argc, char *argv[])
   {
     out[j]         = new Csdr::Ringbuffer<unsigned char>(printChars*4);
     outReader[j]   = new Csdr::RingbufferReader<unsigned char>(out[j]);
-    rttyDecoder[j] = new Csdr::BufferedModule<float, unsigned char>(new Csdr::RttyDecoder(false), printChars*4*7);
+    rttyDecoder[j] = new Csdr::BufferedModule<float, unsigned char>(new Csdr::RttyDecoder(invert), printChars*4*7);
     bdotDecoder[j] = new Csdr::BufferedModule<unsigned char, unsigned char>(new Csdr::BaudotDecoder(), printChars*4);
     rttyDecoder[j]->connect(bdotDecoder[j]);
     bdotDecoder[j]->setWriter(out[j]);
   }
 
   // Read and decode input
-  for(avgPower=4.0, x=0 ; ; )
+  for(avgPower=4.0, x=y=0 ; ; )
   {
     if(!use16bit)
     {
@@ -251,41 +258,40 @@ int main(int argc, char *argv[])
     accPower /= n;
     avgPower += (accPower - avgPower) * MAX_INPUT / sampleRate / AVG_SECONDS;
 
-    // Decode by channel
-    for(j=0 ; j<MAX_CHANNELS ; ++j)
-    {
-      float power = fftOut[j][0];
-
 #if USE_AVG_RATIO
-      // Divide channel signal by the average power
-      accPower = fmax(1.0, power / fmax(avgPower, 0.000001));
+    // Divide channel signal by the average power
+    for(j=0 ; j<MAX_CHANNELS ; ++j)
+      fftOut[j][0] = fmax(1.0, fftOut[j][0] / fmax(avgPower, 0.000001));
 #elif USE_AVG_BOTTOM
-      // Subtract average power from the channel signal
-      accPower = fmax(0.0, power - avgPower);
+    // Subtract average power from the channel signal
+    for(j=0 ; j<MAX_CHANNELS ; ++j)
+      fftOut[j][0] = fmax(0.0, fftOut[j][0] - avgPower);
 #elif USE_THRESHOLD
-      // Convert channel signal to 1/0 values based on threshold
-      accPower = power >= avgPower*THRES_WEIGHT? 1.0 : 0.0;
-#else
-      // Use power as-is
-      accPower = power;
+    // Convert channel signal to 1/0 values based on threshold
+    for(j=0 ; j<MAX_CHANNELS ; ++j)
+      fftOut[j][0] = fftOut[j][0] >= avgPower*THRES_WEIGHT? 1.0 : 0.0;
 #endif
 
-      int state = !j? 0
-                : accPower > RTTY_WEIGHT * prevPower? 1
-                : prevPower > RTTY_WEIGHT * accPower? -1
-                : 0;
+    // Run test RTTY sequence on the first decoder
+    fftOut[0][0] = (testRtty[x]=='1')!=invert? 0.5 : 5.0;
+    fftOut[1][0] = 5.0 - fftOut[0][0];
 
-      // Save previous power value
-      prevPower = accPower;
+    // Decode by channel
+    for(j=0 ; j<MAX_CHANNELS-1 ; ++j)
+    {
+      float power0 = fftOut[j][0];
+      float power1 = fftOut[j+1][0];
 
-      // Run test RTTY sequence on the first decoder
-//      if(!j) state = testRtty[x]=='1'? 1:-1;
+      int state =
+          power1 > RTTY_WEIGHT * power0? 1
+        : power0 > RTTY_WEIGHT * power1? -1
+        : 0;
 
       // Show data by channel, for debugging purposes
-      dbgOut[j] = state > 0? '>' : state < 0? '<' : power >= avgPower*THRES_WEIGHT? '=' : '.';
+      dbgOut[j] = state > 0? '>' : state < 0? '<' : power1 >= avgPower*THRES_WEIGHT? '=' : '.';
 
       // Accumulate state data
-      n = inCount[j]+MAX_INPUT>baudStep? baudStep-inCount[j] : MAX_INPUT;
+      n = inCount[j] + MAX_INPUT > baudStep? baudStep - inCount[j] : MAX_INPUT;
       inCount[j] += MAX_INPUT;
       inLevel[j] += state * n;
 
@@ -310,7 +316,7 @@ int main(int argc, char *argv[])
         inLevel[j]  = n * inCount[j];
 
         // Advance test RTTY sequence
-        if(!j && !testRtty[++x]) x = 0;
+        if(!j && !testRtty[++x]) { x = y; y = (y + 1) & 15; }
 
         // Show data by channel, for debugging purposes
         dbgOut[j] = state > 0? '1' : state < 0? '0' : '?';
@@ -331,7 +337,7 @@ int main(int argc, char *argv[])
         {
           // ...and these bits are 1xxxxx0...
           float *data = reader->getReadPointer();
-          if(data[0]<0.5 && data[6]>0.5)
+          if((data[0]!=data[6]) && ((data[0]<data[6])!=invert))
           {
             // Process input character
             rttyDecoder[j]->processAll();
