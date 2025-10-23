@@ -11,12 +11,13 @@
 #define USE_NEIGHBORS  0 // 1: Subtract neighbors from each FFT bucket
 #define USE_AVG_BOTTOM 0 // 1: Subtract average value from each bucket
 #define USE_AVG_RATIO  0 // 1: Divide each bucket by average value
-#define USE_THRESHOLD  0 // 1: Convert each bucket to 0.0/1.0 values
+#define USE_THRESHOLD  1 // 1: Convert each bucket to 0.0/1.0 values
+#define USE_TEST       0 // 1: Run test RTTY sequence
 
-#define BAUD_RATE    (45.45)
-#define BANDWIDTH    (170)
-//#define BAUD_RATE    (50.0)
-//#define BANDWIDTH    (450)
+//#define BAUD_RATE    (45.45)
+//#define BANDWIDTH    (170)
+#define BAUD_RATE    (50.0)
+#define BANDWIDTH    (450)
 #define MAX_SCALES   (16)
 #define MAX_INPUT    (sampleRate/(BANDWIDTH/2))
 #define MAX_CHANNELS (MAX_INPUT/2)
@@ -29,16 +30,18 @@ unsigned int sampleRate = 48000; // Input audio sampling rate
 unsigned int printChars = 8;     // Number of characters to print at once
 bool use16bit = false;           // TRUE: Use S16 input values (else F32)
 bool showDbg  = false;           // TRUE: Print debug data to stderr
-bool invert   = false;//true;           // TRUE: Invert RTTY levels
+bool invert   = true;//false;            // TRUE: Invert RTTY levels
 
 Csdr::Ringbuffer<unsigned char> **out;
 Csdr::RingbufferReader<unsigned char> **outReader;
 Csdr::BufferedModule<unsigned char, unsigned char> **bdotDecoder;
 Csdr::BufferedModule<float, unsigned char> **rttyDecoder;
 
+#if USE_TEST
 static const char *testRtty =
 // A      B      C      D      E
   "01100010100111001110101001010100001";
+#endif
 
 // Print output from ith decoder
 void printOutput(FILE *outFile, int i, unsigned int freq, unsigned int printChars)
@@ -272,15 +275,17 @@ int main(int argc, char *argv[])
       fftOut[j][0] = fftOut[j][0] >= avgPower*THRES_WEIGHT? 1.0 : 0.0;
 #endif
 
+#if USE_TEST
     // Run test RTTY sequence on the first decoder
     fftOut[0][0] = (testRtty[x]=='1')!=invert? 0.5 : 5.0;
-    fftOut[1][0] = 5.0 - fftOut[0][0];
+    fftOut[2][0] = 5.0 - fftOut[0][0];
+#endif
 
     // Decode by channel
-    for(j=0 ; j<MAX_CHANNELS-1 ; ++j)
+    for(j=0 ; j<MAX_CHANNELS-2 ; ++j)
     {
       float power0 = fftOut[j][0];
-      float power1 = fftOut[j+1][0];
+      float power1 = fftOut[j+2][0];
 
       int state =
           power1 > RTTY_WEIGHT * power0? 1
@@ -315,8 +320,10 @@ int main(int argc, char *argv[])
         inCount[j] -= baudStep;
         inLevel[j]  = n * inCount[j];
 
+#if USE_TEST
         // Advance test RTTY sequence
         if(!j && !testRtty[++x]) { x = y; y = (y + 1) & 15; }
+#endif
 
         // Show data by channel, for debugging purposes
         dbgOut[j] = state > 0? '1' : state < 0? '0' : '?';
@@ -343,7 +350,7 @@ int main(int argc, char *argv[])
             rttyDecoder[j]->processAll();
             bdotDecoder[j]->processAll();
             // Print output
-            printOutput(outFile, j, j * sampleRate / 2 / MAX_CHANNELS, printChars);
+            printOutput(outFile, j, (j + 1) * BANDWIDTH / 2 + BANDWIDTH / 4, printChars);
           }
           else
           {
