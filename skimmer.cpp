@@ -14,12 +14,8 @@
 #define USE_THRESHOLD  1 // 1: Convert each bucket to 0.0/1.0 values
 #define USE_TEST       0 // 1: Run test RTTY sequence
 
-//#define BAUD_RATE    (45.45)
-//#define BANDWIDTH    (170)
-#define BAUD_RATE    (50.0)
-#define BANDWIDTH    (450)
 #define MAX_SCALES   (16)
-#define MAX_INPUT    (sampleRate/(BANDWIDTH/2))
+#define MAX_INPUT    (sampleRate/(bandWidth/2))
 #define MAX_CHANNELS (MAX_INPUT/2)
 #define AVG_SECONDS  (3)
 #define NEIGH_WEIGHT (0.5)
@@ -28,9 +24,11 @@
 
 unsigned int sampleRate = 48000; // Input audio sampling rate
 unsigned int printChars = 8;     // Number of characters to print at once
+unsigned int bandWidth  = 170;   // RTTY bandwidth
+float        baudRate   = 45.45; // RTTY baud rate
 bool use16bit = false;           // TRUE: Use S16 input values (else F32)
 bool showDbg  = false;           // TRUE: Print debug data to stderr
-bool invert   = true;//false;            // TRUE: Invert RTTY levels
+bool invert   = false;           // TRUE: Invert RTTY levels
 
 Csdr::Ringbuffer<unsigned char> **out;
 Csdr::RingbufferReader<unsigned char> **outReader;
@@ -107,13 +105,21 @@ int main(int argc, char *argv[])
         sampleRate = j<argc-1? atoi(argv[++j]) : sampleRate;
         sampleRate = sampleRate<8000? 8000 : sampleRate>48000? 48000 : sampleRate;
         break;
+      case 'w':
+        bandWidth = j<argc-1? atoi(argv[++j]) : bandWidth;
+        bandWidth = bandWidth<40? 40 : bandWidth>1000? 1000 : bandWidth;
+        break;
+      case 'b':
+        baudRate = j<argc-1? atof(argv[++j]) : baudRate;
+        baudRate = baudRate<10.0? 10.0 : baudRate>600.0? 600.0 : baudRate;
+        break;
       case 'i':
         use16bit = true;
         break;
       case 'f':
         use16bit = false;
         break;
-      case 'o':
+      case 'x':
         invert = true;
         break;
       case 'd':
@@ -126,7 +132,9 @@ int main(int argc, char *argv[])
         fprintf(stderr, "  -n <chars> -- Number of characters to print.\n");
         fprintf(stderr, "  -i         -- Use 16bit signed integer input.\n");
         fprintf(stderr, "  -f         -- Use 32bit floating point input.\n");
-        fprintf(stderr, "  -o         -- Invert RTTY levels.\n");
+        fprintf(stderr, "  -w <hertz> -- Use given bandwith (170Hz).\n");
+        fprintf(stderr, "  -b <baud>  -- Use given baud rate (45.45bd).\n");
+        fprintf(stderr, "  -x         -- Exchange meanings of mark and space.\n");
         fprintf(stderr, "  -d         -- Print debug information to STDERR.\n");
         fprintf(stderr, "  -h         -- Print this help message.\n");
         return(0);
@@ -164,7 +172,7 @@ int main(int argc, char *argv[])
   bdotDecoder = new Csdr::BufferedModule<unsigned char, unsigned char> *[MAX_CHANNELS];
 
   // This is our baud rate in samples
-  unsigned int baudStep = floor(sampleRate / BAUD_RATE);
+  unsigned int baudStep = floor(sampleRate / baudRate);
 
   // RTTY bits are collected here
   int inLevel[MAX_CHANNELS] = {0};
@@ -350,7 +358,7 @@ int main(int argc, char *argv[])
             rttyDecoder[j]->processAll();
             bdotDecoder[j]->processAll();
             // Print output
-            printOutput(outFile, j, (j + 1) * BANDWIDTH / 2 + BANDWIDTH / 4, printChars);
+            printOutput(outFile, j, (j + 1) * bandWidth / 2 + bandWidth / 4, printChars);
           }
           else
           {
