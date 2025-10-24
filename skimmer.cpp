@@ -54,7 +54,7 @@ void printOutput(FILE *outFile, int i, unsigned int freq, unsigned int printChar
   // Print characters
   unsigned char *p = outReader[i]->getReadPointer();
   for(int j=0 ; j<n ; ++j)
-    fprintf(outFile, "%c", p[j]);
+    fprintf(outFile, "%c", p[j]>=' '? p[j] : ' ');
 
   // Done printing
   outReader[i]->advance(n);
@@ -358,7 +358,7 @@ int main(int argc, char *argv[])
             rttyDecoder[j]->processAll();
             bdotDecoder[j]->processAll();
             // Print output
-            printOutput(outFile, j, (j + 1) * bandWidth / 2 + bandWidth / 4, printChars);
+            printOutput(outFile, j, (int)round((j + 1) * bandWidth / 2.0 + bandWidth / 4.0), printChars);
           }
           else
           {
