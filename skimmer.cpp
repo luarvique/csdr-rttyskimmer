@@ -21,7 +21,7 @@
 #define AVG_SECONDS  (3)
 #define NEIGH_WEIGHT (0.5)
 #define THRES_WEIGHT (6.0)
-#define RTTY_WEIGHT  (10.0)//(8.0)
+#define RTTY_WEIGHT  (4.0)
 
 unsigned int sampleRate = 48000; // Input audio sampling rate
 unsigned int printChars = 8;     // Number of characters to print at once
@@ -310,11 +310,11 @@ int main(int argc, char *argv[])
       inLevel[j] += state * n;
 
       // Resync if cannot determine the signal level
-      if(abs(inLevel[j]) < MAX_INPUT)
-      {
-        inCount[j] = MAX_INPUT;
-        inLevel[j] = state * MAX_INPUT;
-      }
+//      if(abs(inLevel[j]) < MAX_INPUT)
+//      {
+//        inCount[j] = MAX_INPUT;
+//        inLevel[j] = state * MAX_INPUT;
+//      }
 
       // Once enough data accumulated...
       if(inCount[j]<baudStep)
