@@ -6,12 +6,13 @@
 #include "fftw3.h"
 #include <stdio.h>
 #include <string.h>
+#include <float.h>
 #include <math.h>
 
 #define USE_NEIGHBORS  0 // 1: Subtract neighbors from each FFT bucket
 #define USE_AVG_BOTTOM 0 // 1: Subtract average value from each bucket
-#define USE_AVG_RATIO  0 // 1: Divide each bucket by average value
-#define USE_THRESHOLD  1 // 1: Convert each bucket to 0.0/1.0 values
+#define USE_AVG_RATIO  1 // 1: Divide each bucket by average value
+#define USE_THRESHOLD  0 // 1: Convert each bucket to 0.0/1.0 values
 #define USE_TEST       0 // 1: Run test RTTY sequence
 
 #define MAX_SCALES   (16)
@@ -20,7 +21,7 @@
 #define AVG_SECONDS  (3)
 #define NEIGH_WEIGHT (0.5)
 #define THRES_WEIGHT (6.0)
-#define RTTY_WEIGHT  (8.0)
+#define RTTY_WEIGHT  (10.0)//(8.0)
 
 unsigned int sampleRate = 48000; // Input audio sampling rate
 unsigned int printChars = 8;     // Number of characters to print at once
@@ -272,7 +273,7 @@ int main(int argc, char *argv[])
 #if USE_AVG_RATIO
     // Divide channel signal by the average power
     for(j=0 ; j<MAX_CHANNELS ; ++j)
-      fftOut[j][0] = fmax(1.0, fftOut[j][0] / fmax(avgPower, 0.000001));
+      fftOut[j][0] = fmax(1.0, fftOut[j][0] / fmax(avgPower, 10.0*FLT_MIN));
 #elif USE_AVG_BOTTOM
     // Subtract average power from the channel signal
     for(j=0 ; j<MAX_CHANNELS ; ++j)
